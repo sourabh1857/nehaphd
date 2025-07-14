@@ -1,0 +1,217 @@
+# Sample workload to test storage performance with real applications
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: database-workload
+  namespace: storage-performance-test
+  labels:
+    app: database-workload
+    storage-test: "true"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: database-workload
+  template:
+    metadata:
+      labels:
+        app: database-workload
+        storage-test: "true"
+    spec:
+      containers:
+      - name: postgres
+        image: postgres:13
+        env:
+        - name: POSTGRES_DB
+          value: testdb
+        - name: POSTGRES_USER
+          value: testuser
+        - name: POSTGRES_PASSWORD
+          value: testpass
+        - name: PGDATA
+          value: /var/lib/postgresql/data/pgdata
+        ports:
+        - containerPort: 5432
+        volumeMounts:
+        - name: postgres-storage
+          mountPath: /var/lib/postgresql/data
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+      volumes:
+      - name: postgres-storage
+        persistentVolumeClaim:
+          claimName: hostpath-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: database-workload
+  namespace: storage-performance-test
+spec:
+  selector:
+    app: database-workload
+  ports:
+    - protocol: TCP
+      port: 5432
+      targetPort: 5432
+  type: ClusterIP
+---
+# Load generator for database testing
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: database-load-test
+  namespace: storage-performance-test
+spec:
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: pgbench
+        image: postgres:13
+        command: ["/bin/bash"]
+        args:
+        - -c
+        - |
+          echo "Waiting for database to be ready..."
+          until pg_isready -h database-workload -p 5432 -U testuser; do
+            sleep 2
+          done
+          
+          echo "Initializing pgbench..."
+          pgbench -h database-workload -U testuser -d testdb -i -s 10
+          
+          echo "Running performance test..."
+          pgbench -h database-workload -U testuser -d testdb -c 10 -j 2 -t 1000 -r
+          
+          echo "Database performance test completed"
+        env:
+        - name: PGPASSWORD
+          value: testpass
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "200m"
+---
+# File I/O intensive workload
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: file-io-workload
+  namespace: storage-performance-test
+spec:
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: file-io-test
+        image: busybox
+        command: ["/bin/sh"]
+        args:
+        - -c
+        - |
+          echo "Starting file I/O intensive workload..."
+          
+          # Create test directory
+          mkdir -p /data/test
+          cd /data/test
+          
+          # Write test - create multiple files
+          echo "Creating test files..."
+          for i in $(seq 1 100); do
+            dd if=/dev/zero of=testfile_$i.dat bs=1M count=10 2>/dev/null
+          done
+          
+          # Read test - read all files
+          echo "Reading test files..."
+          for i in $(seq 1 100); do
+            cat testfile_$i.dat > /dev/null
+          done
+          
+          # Random access test
+          echo "Random access test..."
+          for i in $(seq 1 1000); do
+            file_num=$((RANDOM % 100 + 1))
+            dd if=testfile_$file_num.dat of=/dev/null bs=4k count=1 skip=$((RANDOM % 2500)) 2>/dev/null
+          done
+          
+          # Cleanup
+          rm -f testfile_*.dat
+          
+          echo "File I/O workload completed"
+        volumeMounts:
+        - name: test-storage
+          mountPath: /data
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "200m"
+      volumes:
+      - name: test-storage
+        persistentVolumeClaim:
+          claimName: local-pvc
+---
+# Log processing workload (write-heavy)
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: log-processing-workload
+  namespace: storage-performance-test
+spec:
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: log-processor
+        image: busybox
+        command: ["/bin/sh"]
+        args:
+        - -c
+        - |
+          echo "Starting log processing workload..."
+          
+          # Simulate continuous log writing
+          for i in $(seq 1 1000); do
+            timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+            echo "$timestamp [INFO] Processing request $i - $(head -c 100 /dev/urandom | base64)" >> /logs/application.log
+            echo "$timestamp [DEBUG] Memory usage: $((RANDOM % 100))%" >> /logs/debug.log
+            echo "$timestamp [ERROR] Simulated error $((i % 50))" >> /logs/error.log
+            
+            # Occasionally rotate logs
+            if [ $((i % 100)) -eq 0 ]; then
+              mv /logs/application.log /logs/application.log.$i
+              mv /logs/debug.log /logs/debug.log.$i
+              mv /logs/error.log /logs/error.log.$i
+            fi
+            
+            # Small delay to simulate real workload
+            sleep 0.1
+          done
+          
+          echo "Log processing workload completed"
+          echo "Generated log files:"
+          ls -la /logs/
+        volumeMounts:
+        - name: log-storage
+          mountPath: /logs
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+          limits:
+            memory: "128Mi"
+            cpu: "100m"
+      volumes:
+      - name: log-storage
+        emptyDir: {}

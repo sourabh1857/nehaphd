@@ -1,0 +1,225 @@
+# FIO Benchmark Pod for Storage Performance Testing
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fio-config
+data:
+  # Random Read/Write Test
+  random-rw.fio: |
+    [global]
+    ioengine=libaio
+    direct=1
+    size=1G
+    directory=/test-data
+    runtime=60
+    time_based=1
+    group_reporting=1
+    
+    [random-read]
+    bs=4k
+    rw=randread
+    numjobs=4
+    
+    [random-write]
+    bs=4k
+    rw=randwrite
+    numjobs=4
+    
+  # Sequential Read/Write Test
+  sequential-rw.fio: |
+    [global]
+    ioengine=libaio
+    direct=1
+    size=1G
+    directory=/test-data
+    runtime=60
+    time_based=1
+    group_reporting=1
+    
+    [sequential-read]
+    bs=1M
+    rw=read
+    numjobs=1
+    
+    [sequential-write]
+    bs=1M
+    rw=write
+    numjobs=1
+    
+  # Mixed Workload Test
+  mixed-workload.fio: |
+    [global]
+    ioengine=libaio
+    direct=1
+    size=1G
+    directory=/test-data
+    runtime=60
+    time_based=1
+    group_reporting=1
+    
+    [mixed-rw]
+    bs=4k
+    rw=randrw
+    rwmixread=70
+    numjobs=2
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: fio-benchmark-hostpath
+  labels:
+    storage-type: hostpath
+spec:
+  template:
+    metadata:
+      labels:
+        storage-type: hostpath
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: fio
+        image: ljishen/fio
+        command: ["/bin/sh"]
+        args:
+        - -c
+        - |
+          echo "Starting FIO benchmark for HostPath storage..."
+          echo "=== Random Read/Write Test ===" > /results/hostpath-results.txt
+          fio /config/random-rw.fio --output-format=json >> /results/hostpath-results.txt
+          echo "=== Sequential Read/Write Test ===" >> /results/hostpath-results.txt
+          fio /config/sequential-rw.fio --output-format=json >> /results/hostpath-results.txt
+          echo "=== Mixed Workload Test ===" >> /results/hostpath-results.txt
+          fio /config/mixed-workload.fio --output-format=json >> /results/hostpath-results.txt
+          echo "Benchmark completed for HostPath storage"
+        volumeMounts:
+        - name: test-storage
+          mountPath: /test-data
+        - name: fio-config
+          mountPath: /config
+        - name: results
+          mountPath: /results
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "500m"
+          limits:
+            memory: "1Gi"
+            cpu: "1000m"
+      volumes:
+      - name: test-storage
+        persistentVolumeClaim:
+          claimName: hostpath-pvc
+      - name: fio-config
+        configMap:
+          name: fio-config
+      - name: results
+        hostPath:
+          path: /tmp/k8s-benchmark-results
+          type: DirectoryOrCreate
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: fio-benchmark-local
+  labels:
+    storage-type: local
+spec:
+  template:
+    metadata:
+      labels:
+        storage-type: local
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: fio
+        image: ljishen/fio
+        command: ["/bin/sh"]
+        args:
+        - -c
+        - |
+          echo "Starting FIO benchmark for Local PV storage..."
+          echo "=== Random Read/Write Test ===" > /results/local-results.txt
+          fio /config/random-rw.fio --output-format=json >> /results/local-results.txt
+          echo "=== Sequential Read/Write Test ===" >> /results/local-results.txt
+          fio /config/sequential-rw.fio --output-format=json >> /results/local-results.txt
+          echo "=== Mixed Workload Test ===" >> /results/local-results.txt
+          fio /config/mixed-workload.fio --output-format=json >> /results/local-results.txt
+          echo "Benchmark completed for Local PV storage"
+        volumeMounts:
+        - name: test-storage
+          mountPath: /test-data
+        - name: fio-config
+          mountPath: /config
+        - name: results
+          mountPath: /results
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "500m"
+          limits:
+            memory: "1Gi"
+            cpu: "1000m"
+      volumes:
+      - name: test-storage
+        persistentVolumeClaim:
+          claimName: local-pvc
+      - name: fio-config
+        configMap:
+          name: fio-config
+      - name: results
+        hostPath:
+          path: /tmp/k8s-benchmark-results
+          type: DirectoryOrCreate
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: fio-benchmark-emptydir
+  labels:
+    storage-type: emptydir
+spec:
+  template:
+    metadata:
+      labels:
+        storage-type: emptydir
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: fio
+        image: ljishen/fio
+        command: ["/bin/sh"]
+        args:
+        - -c
+        - |
+          echo "Starting FIO benchmark for EmptyDir storage..."
+          echo "=== Random Read/Write Test ===" > /results/emptydir-results.txt
+          fio /config/random-rw.fio --output-format=json >> /results/emptydir-results.txt
+          echo "=== Sequential Read/Write Test ===" >> /results/emptydir-results.txt
+          fio /config/sequential-rw.fio --output-format=json >> /results/emptydir-results.txt
+          echo "=== Mixed Workload Test ===" >> /results/emptydir-results.txt
+          fio /config/mixed-workload.fio --output-format=json >> /results/emptydir-results.txt
+          echo "Benchmark completed for EmptyDir storage"
+        volumeMounts:
+        - name: test-storage
+          mountPath: /test-data
+        - name: fio-config
+          mountPath: /config
+        - name: results
+          mountPath: /results
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "500m"
+          limits:
+            memory: "1Gi"
+            cpu: "1000m"
+      volumes:
+      - name: test-storage
+        emptyDir: {}
+      - name: fio-config
+        configMap:
+          name: fio-config
+      - name: results
+        hostPath:
+          path: /tmp/k8s-benchmark-results
+          type: DirectoryOrCreate
